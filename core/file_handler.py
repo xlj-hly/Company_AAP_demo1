@@ -117,7 +117,7 @@ class FileHandler:
             
             # 获取图片文件列表
             images = [f for f in os.listdir(source_dir) 
-                     if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                     if f.lower().endswith(('.png', '.jpg', '.jpeg', '.mp4'))]
             
             if not images:
                 logger.info(f"等待图片文件: {source_dir}")
