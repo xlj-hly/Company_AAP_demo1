@@ -21,6 +21,8 @@ from utils.adb_utils import ADBHelper
 from utils.logger import get_logger
 from config.settings import DEVICE_MAPPING, TASK_STATUS, LOG_DIR, DEVICE_PATHS
 from datetime import datetime
+import subprocess
+import hashlib
 
 logger = get_logger(__name__)
 
@@ -29,17 +31,18 @@ class FileHandler:
         self.root_dir = root_dir       # 项目根目录
         self.adb_helper = ADBHelper()  # ADB工具实例
         self.transfer_log_path = os.path.join(LOG_DIR, 'transfer_history.log')
+        self.file_hashes = {}  # 存储文件哈希值
     
     def _convert_time_format(self, time_str):
         """转换时间格式为目录格式"""
         try:
             # 如果是 Timestamp 类型，直接使用
             if hasattr(time_str, 'strftime'):
-                return time_str.strftime('%Y-%m-%d %H-%M-%S')
+                return time_str.strftime('%Y-%m-%d_%H-%M')
             
             # 如果是字符串，先解析
             dt = datetime.strptime(str(time_str), '%Y-%m-%d %H:%M:%S')
-            return dt.strftime('%Y-%m-%d %H-%M-%S')
+            return dt.strftime('%Y-%m-%d_%H-%M')
         except Exception as e:
             logger.error(f"时间格式转换失败: {str(e)}")
             return None
@@ -71,113 +74,202 @@ class FileHandler:
         except Exception as e:
             logger.error(f"写入传输日志失败: {str(e)}")
 
-    def transfer_images(self, post_name, time_str):
+    def _get_target_path(self, device_id, source_path, time_str):
+        """获取设备上的目标路径"""
         try:
-            # 只输出任务开始的关键信息
-            logger.info(f"开始处理传输任务 - 设备: {post_name}, 时间: {time_str}")
+            # 获取设备基础路径
+            base_path = DEVICE_PATHS.get(device_id)
+            if not base_path:
+                raise ValueError(f"设备路径未配置: {device_id}")
             
-            # 设备映射检查
+            # 处理时间格式 (YYYY-MM-DD HH:MM -> YYYY-MM-DD_HH-MM)
+            if hasattr(time_str, 'strftime'):
+                dir_name = time_str.strftime('%Y-%m-%d_%H-%M')
+            else:
+                # 转换字符串格式
+                dt = datetime.strptime(str(time_str), '%Y-%m-%d %H:%M:%S')
+                dir_name = dt.strftime('%Y-%m-%d_%H-%M')
+            
+            # 获取文件名
+            file_name = os.path.basename(source_path)
+            
+            # 构建目标路径
+            target_path = f"{base_path.rstrip('/')}/{dir_name}/{file_name}"
+            return target_path.replace('\\', '/')
+            
+        except Exception as e:
+            logger.error(f"构建目标路径失败: {str(e)}")
+            raise
+
+    def _calculate_file_hash(self, file_path):
+        """计算文件的MD5哈希值"""
+        try:
+            with open(file_path, 'rb') as f:
+                return hashlib.md5(f.read()).hexdigest()
+        except Exception:
+            return None
+            
+    def _check_file_changed(self, file_path):
+        """检查文件是否发生变化"""
+        current_hash = self._calculate_file_hash(file_path)
+        if not current_hash:
+            return True
+            
+        previous_hash = self.file_hashes.get(file_path)
+        self.file_hashes[file_path] = current_hash
+        return previous_hash != current_hash
+        
+    def transfer_images(self, post_name, time_str):
+        """传输文件并确保完成"""
+        try:
+            # 初始化传输状态
+            transfer_summary = {
+                'total': 0,
+                'success': 0,
+                'failed': 0,
+                'failed_files': []
+            }
+            
+            # 首先检查设备连接
             device_id = DEVICE_MAPPING.get(post_name)
             if not device_id:
-                msg = f"设备映射未找到: {post_name}"
-                self.log_transfer_result(post_name, time_str, "N/A", False, "DEVICE_NOT_FOUND", msg)
+                logger.error(f"设备映射未找到: {post_name}")
                 return False, "DEVICE_NOT_FOUND"
             
-            # 获取设备目标路径
-            device_base_path = DEVICE_PATHS.get(device_id)
-            if not device_base_path:
-                msg = f"设备路径未配置: {device_id}"
-                self.log_transfer_result(post_name, time_str, "N/A", False, "INVALID_PATH", msg)
-                return False, "INVALID_PATH"
+            if not self.adb_helper.is_device_connected(device_id):
+                logger.error(f"设备未连接: {device_id}")
+                return False, "DEVICE_NOT_CONNECTED"
             
-            # 构建源目录和目标目录
+            # 构建源目录路径
             dir_time = self._convert_time_format(time_str)
-            # date_only = dir_time.split()[0]  # 只取日期部分 "2025-03-17"
-            date_only = dir_time.replace(' ', '_').replace('-', '-')  # 日期部分 "2025-03-17"
+            base_dir = os.path.join(self.root_dir, post_name, dir_time)
+            source_dir = os.path.join(base_dir, 'img')
             
-            source_dir = os.path.join(self.root_dir, post_name, dir_time, 'img')
-            # 目标目录只使用日期
-            target_dir = f"{device_base_path.rstrip('/')}/{date_only}"
-            target_dir = target_dir.replace('\\', '/')
+            # 添加路径调试信息
+            logger.debug(f"检查目录: {base_dir}")
+            logger.debug(f"图片目录: {source_dir}")
             
-            logger.info(f"源目录: {source_dir}")
-            logger.info(f"目标目录: {target_dir}")
-            
-            # 检查传输历史
-            if self.is_transfer_completed(post_name, time_str):
-                logger.info(f"任务已完成: {post_name} - {time_str}")
-                return True, "ALREADY_TRANSFERRED"
-            
-            # 创建源目录
-            os.makedirs(source_dir, exist_ok=True)
-            
+            # 检查媒体目录
             if not os.path.exists(source_dir):
-                logger.error(f"源目录不存在: {source_dir}")
-                return False, "INVALID_PATH"
+                logger.info(f"等待媒体文件目录: {source_dir}")
+                return False, "WAITING_MEDIA"
             
-            # 获取图片文件列表
-            images = [f for f in os.listdir(source_dir) 
-                     if f.lower().endswith(('.png', '.jpg', '.jpeg', '.mp4'))]
+            # 获取所有媒体文件并输出调试信息
+            media_files = [f for f in os.listdir(source_dir) 
+                         if f.lower().endswith(('.png', '.jpg', '.jpeg', '.mp4'))]
             
-            if not images:
-                logger.info(f"等待图片文件: {source_dir}")
-                return False, "NO_IMAGES"
+            if not media_files:
+                logger.info(f"没有找到媒体文件: {source_dir}")
+                return False, "NO_MEDIA_FILES"
             
-            # 输出传输开始信息
-            logger.info(f"开始传输 {len(images)} 个文件")
+            logger.info(f"找到 {len(media_files)} 个媒体文件")
             
-            # 批量传输处理
-            transfer_results = []
+            # 检查文件变化
+            changed_files = []
+            for media_file in media_files:
+                file_path = os.path.join(source_dir, media_file)
+                if self._check_file_changed(file_path):
+                    changed_files.append(media_file)
+            
+            if not changed_files:
+                logger.debug("没有检测到文件变化，跳过传输")
+                return True, "NO_CHANGES"
+            
+            # 只传输发生变化的文件
+            logger.info(f"开始传输变化的文件 - {post_name} ({len(changed_files)}个文件)")
+            
             success_count = 0
+            failed_files = []
             
-            for img in images:
-                source_path = os.path.join(source_dir, img)
-                # 构建目标文件路径，添加时间作为文件名前缀
-                time_prefix = dir_time.replace(' ', '_').replace(':', '-')
-                target_filename = f"{time_prefix}_{img}"
-                target_path = f"{target_dir}/{target_filename}"
-                target_path = target_path.replace('\\', '/')
-                
-                logger.info(f"传输文件: {img}")
-                logger.info(f"源路径: {source_path}")
-                logger.info(f"目标路径: {target_path}")
-                
-                if self.is_file_transferred(post_name, time_str, img):
-                    success_count += 1
-                    continue
-                
-                # 输出当前处理的文件
-                logger.info(f"传输文件: {img}")
-                success, status = self.adb_helper.push_file(device_id, source_path, target_path)
-                transfer_results.append((success, status))
-                
-                self.log_transfer_result(
-                    post_name, 
-                    time_str, 
-                    img, 
-                    success, 
-                    status,
-                    None if success else f"传输失败: {status}"
-                )
-                
-                if success:
-                    success_count += 1
+            for media_file in changed_files:
+                try:
+                    source_path = os.path.join(source_dir, media_file)
+                    target_path = self._get_target_path(device_id, source_path, time_str)
+                    
+                    # 详细日志写入文件
+                    logger.debug(f"传输: {media_file} -> {target_path}")
+                    
+                    success, status = self.adb_helper.push_file(device_id, source_path, target_path)
+                    if success:
+                        success_count += 1
+                    else:
+                        failed_files.append((media_file, status))
+                        
+                except Exception as e:
+                    failed_files.append((media_file, str(e)))
+                    logger.debug(f"文件传输失败: {media_file} - {str(e)}")
             
-            # 输出传输结果摘要
-            total = len(images)
-            logger.info(f"传输完成 - 成功: {success_count}/{total}")
-            
-            if success_count == total:
-                self.mark_transfer_completed(post_name, time_str)
-                return True, "SUCCESS"
-            elif success_count > 0:
-                return False, "PARTIAL_SUCCESS"
+            # 简化的结果输出
+            if failed_files:
+                logger.info(f"传输完成: {success_count}/{len(changed_files)} 成功")
+                # 详细失败信息写入debug日志
+                for file, error in failed_files:
+                    logger.debug(f"失败: {file} - {error}")
+                return False, "TRANSFER_INCOMPLETE"
             else:
-                return False, transfer_results[0][1]
-                
+                logger.info(f"传输成功: {success_count}/{len(changed_files)}")
+                return True, "SUCCESS"
+            
         except Exception as e:
             logger.error(f"传输过程出错: {str(e)}")
             return False, "FAILED"
+
+    def _log_transfer_summary(self, post_name, summary):
+        """输出传输汇总信息"""
+        logger.info(f"""
+传输任务汇总 - {post_name}
+----------------------------
+总文件数: {summary['total']}
+成功: {summary['success']}
+失败: {summary['failed']}
+""")
+        
+        # 只有在有失败的情况下才输出详细失败信息
+        if summary['failed'] > 0:
+            logger.error("失败文件详情:")
+            for fail in summary['failed_files']:
+                if 'error' in fail:
+                    logger.error(f"- {fail['file']}: {fail['error']}")
+                else:
+                    logger.error(f"- {fail['file']}: {fail['status']}")
+
+    def _transfer_and_verify(self, device_id, source_path, time_str):
+        """传输单个文件并验证"""
+        try:
+            # 获取目标路径
+            target_path = self._get_target_path(device_id, source_path, time_str)
+            
+            # 执行传输
+            success, status = self.adb_helper.push_file(device_id, source_path, target_path)
+            if not success:
+                return False, status
+            
+            # 验证文件是否成功传输
+            if self._verify_file_transfer(device_id, target_path):
+                return True, "SUCCESS"
+            else:
+                return False, "VERIFICATION_FAILED"
+                
+        except Exception as e:
+            logger.error(f"文件传输验证失败: {str(e)}")
+            return False, "FAILED"
+
+    def _verify_file_transfer(self, device_id, target_path):
+        """验证文件传输是否成功"""
+        try:
+            # 使用ADB检查文件是否存在且大小正确
+            command = [
+                ADB_COMMAND,
+                '-s', device_id,
+                'shell',
+                f'ls -l "{target_path}"'
+            ]
+            
+            result = subprocess.run(command, capture_output=True, text=True)
+            return result.returncode == 0 and len(result.stdout.strip()) > 0
+            
+        except Exception:
+            return False
 
     def is_transfer_completed(self, post_name, time_str):
         """检查任务是否已经完成传输"""

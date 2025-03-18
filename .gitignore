@@ -15,7 +15,7 @@ __pycache__/
 .installed.cfg
 *.egg
 logs/
-img/
+*img/
 
 # 虚拟环境
 /.venv/

@@ -17,33 +17,84 @@
 
 import logging
 import sys
-from config.settings import LOG_DIR, LOG_FORMAT, LOG_LEVEL
+from logging.handlers import RotatingFileHandler
 import os
+from config.settings import LOG_CONFIG, LOG_DIR
+
+class FilteredHandler(logging.StreamHandler):
+    def __init__(self, ignore_rules=None):
+        super().__init__(sys.stdout)
+        self.ignore_rules = ignore_rules or {}
+
+    def emit(self, record):
+        """实现emit方法"""
+        try:
+            if self.should_ignore(record):
+                return
+            super().emit(record)
+        except Exception:
+            self.handleError(record)
+    
+    def should_ignore(self, record):
+        level = record.levelname.lower()
+        message = record.getMessage()
+        module = record.name
+        
+        rules = self.ignore_rules
+        if not rules:
+            return False
+            
+        # 检查模块特定规则
+        if module in rules.get(level, {}):
+            for pattern in rules[level][module]:
+                if pattern in message:
+                    return True
+        
+        # 检查全局规则
+        if "global" in rules.get(level, {}):
+            for pattern in rules[level]["global"]:
+                if pattern in message:
+                    return True
+        
+        return False
 
 def get_logger(name):
     """获取模块专用日志记录器"""
     logger = logging.getLogger(name)
-    logger.setLevel(LOG_LEVEL)
+    logger.setLevel(logging.DEBUG)
+    
+    # 如果已经有处理器，则不重复添加
+    if logger.handlers:
+        return logger
     
     # 创建日志目录
     os.makedirs(LOG_DIR, exist_ok=True)
     
-    # 文件处理器配置
-    file_handler = logging.FileHandler(
+    try:
+        # 尝试导入ignore_config
+        from config.ignore_config import ignore_config
+        console_handler = FilteredHandler(ignore_config.ignore_rules)
+    except ImportError:
+        # 如果无法导入，使用基本的StreamHandler
+        console_handler = logging.StreamHandler(sys.stdout)
+    
+    console_handler.setLevel(LOG_CONFIG['CONSOLE_LEVEL'])
+    console_formatter = logging.Formatter(LOG_CONFIG['FORMAT'])
+    console_handler.setFormatter(console_formatter)
+    
+    # 文件处理器
+    file_handler = RotatingFileHandler(
         os.path.join(LOG_DIR, f"{name}.log"),
+        maxBytes=LOG_CONFIG['MAX_BYTES'],
+        backupCount=LOG_CONFIG['BACKUP_COUNT'],
         encoding='utf-8'
     )
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    
-    # 控制台处理器配置
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    
-    # 清除已有处理器避免重复
-    logger.handlers.clear()
+    file_handler.setLevel(LOG_CONFIG['FILE_LEVEL'])
+    file_formatter = logging.Formatter(LOG_CONFIG['FORMAT'])
+    file_handler.setFormatter(file_formatter)
     
     # 添加处理器
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
     
     return logger

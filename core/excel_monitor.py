@@ -26,6 +26,14 @@ import threading
 import time
 from datetime import datetime, timedelta
 import hashlib
+from core.task_validator import TaskValidator
+from config.settings import (
+    RESOURCE_DIRS, 
+    EXCEL_CONFIG, 
+    DIRECTORY_STRUCTURE,
+    TASK_VALIDATION
+)
+from utils.excel_backup import ExcelBackup
 
 logger = get_logger(__name__)
 
@@ -39,23 +47,28 @@ class ExcelEventHandler(FileSystemEventHandler):
         self.cooldown = 1  # 事件冷却时间（防止重复触发）
         
     def on_modified(self, event):
-        """处理文件修改事件"""
+        """处理Excel文件修改事件"""
         if not event.is_directory and event.src_path.endswith('.xlsx'):
             current_time = time.time()
-            # 冷却时间检查避免重复触发
             if current_time - self.last_modified > self.cooldown:
                 self.last_modified = current_time
                 logger.info(f"检测到Excel文件变化: {event.src_path}")
-                # 触发强制检查
                 self.monitor.check_excel_data(force_check=True)
+                
+    def on_created(self, event):
+        """处理新文件创建事件"""
+        if not event.is_directory and any(event.src_path.endswith(ext) 
+            for ext in ['.jpg', '.jpeg', '.png', '.mp4']):
+            logger.info(f"检测到新资源文件: {event.src_path}")
+            self.monitor.handle_resource_change(event.src_path)
 
 
 class ExcelMonitor:
     """Excel文件监控器（主体）"""
     
     def __init__(self, excel_path, headers):
-        self.excel_path = excel_path  # 监控的Excel路径
-        self.headers = headers        # 必须包含的字段
+        self.excel_path = excel_path
+        self.headers = headers
         self.observer = Observer()   # 文件系统观察者
         self.last_data_hash = None   # 上次数据哈希值
         self.last_check_time = 0     # 上次检查时间
@@ -66,6 +79,9 @@ class ExcelMonitor:
         self._data_cache = None      # 数据缓存
         self._cache_time = 0         # 缓存时间
         self.cache_ttl = 2           # 缓存有效期
+        self.excel_backup = ExcelBackup()
+        self.last_backup_time = 0
+        self.resource_handlers = []  # 资源变化处理器列表
 
     def calculate_data_hash(self, df):
         """计算数据帧的MD5哈希值用于变化检测"""
@@ -120,54 +136,83 @@ class ExcelMonitor:
 
     def filter_valid_rows(self, df):
         """
-        过滤有效的数据行，并提供详细的时间信息
+        过滤有效的数据行
+        
+        处理流程：
+        1. 检查必要字段
+        2. 过滤未来任务
+        3. 创建任务目录结构
+        
+        Args:
+            df (DataFrame): 原始数据框
+            
+        Returns:
+            DataFrame: 过滤后的有效数据行
         """
         try:
-            # 首先检查必填字段
-            valid_rows = df.dropna(subset=self.headers)
-
-            # 然后过滤未过期的行（包含30分钟缓冲）
-            valid_rows = valid_rows[valid_rows.apply(self.is_row_valid, axis=1)]
-
-            # 按时间排序并记录详细信息
-            if not valid_rows.empty:
-                def parse_time(time_str):
-                    try:
-                        return pd.to_datetime(time_str, format='%Y-%m-%d %H:%M:%S')
-                    except ValueError:
-                        try:
-                            return pd.to_datetime(time_str, format='%Y-%m-%d_%H')
-                        except ValueError:
-                            return pd.NaT
-
-                valid_rows['datetime'] = valid_rows['time'].apply(parse_time)
-                valid_rows = valid_rows.sort_values('datetime')
-
-                # 获取当前时间和缓冲时间
-                now = datetime.now()
-                buffer_time = now - timedelta(minutes=30)
-
-                logger.info(f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-                logger.info(f"有效时间范围起点: {buffer_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                logger.info(f"找到 {len(valid_rows)} 条未过期的有效数据")
-                logger.info(f"最早任务时间: {valid_rows.iloc[0]['time']}")
-                logger.info(f"最晚任务时间: {valid_rows.iloc[-1]['time']}")
-
-                # 删除临时的datetime列
-                valid_rows = valid_rows.drop('datetime', axis=1)
-            else:
-                logger.info(f"当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                logger.info("没有找到未过期的有效数据")
-
+            validator = TaskValidator()
+            
+            # 基础数据清理
+            required_fields = ['time', 'postName']
+            valid_rows = df.dropna(subset=required_fields)
+            
+            # 状态字段标准化
+            if 'status' not in valid_rows.columns:
+                valid_rows['status'] = ''
+            valid_rows['status'] = valid_rows['status'].astype(str).str.strip()
+            
+            # 只保留未来任务
+            valid_rows = valid_rows[valid_rows['time'].apply(validator.is_task_valid)]
+            
+            # 创建任务目录
+            for _, row in valid_rows.iterrows():
+                if validator.can_modify_task(row['time']):
+                    self._ensure_task_directories(row)
+            
             return valid_rows
-
+            
         except Exception as e:
-            logger.error(f"过滤有效行时发生错误: {str(e)}")
+            logger.error(f"过滤数据行失败: {str(e)}")
             return pd.DataFrame()
+
+    def _ensure_task_directories(self, row):
+        """确保任务目录结构存在"""
+        try:
+            time_str = str(row['time']).strip()
+            post_name = str(row['postName']).strip()
+            
+            # 转换时间格式为目录名
+            dt = datetime.strptime(time_str, TASK_VALIDATION['TIME_FORMAT'])
+            dir_name = dt.strftime('%Y-%m-%d_%H-%M')  # 使用相同的格式
+            
+            # 创建目录结构
+            base_dir = os.path.join(RESOURCE_DIRS['UPLOADS'], post_name, dir_name)
+            img_dir = os.path.join(base_dir, DIRECTORY_STRUCTURE['TASK_DIR']['IMG_DIR'])
+            
+            # 创建目录结构
+            os.makedirs(img_dir, exist_ok=True)
+            
+            # 创建content.txt文件
+            content_file = os.path.join(base_dir, DIRECTORY_STRUCTURE['TASK_DIR']['CONTENT_FILE'])
+            if not os.path.exists(content_file):
+                with open(content_file, 'w', encoding='utf-8') as f:
+                    f.write(DIRECTORY_STRUCTURE['CONTENT_TEMPLATE'])
+            
+            logger.info(f"成功创建任务目录: {base_dir}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"创建任务目录失败: {str(e)}")
+            return False
 
     def check_excel_data(self, force_check=False):
         """检查Excel数据变化"""
         current_time = time.time()
+        
+        # 定期备份Excel
+        if current_time - self.last_backup_time >= EXCEL_CONFIG['BACKUP_INTERVAL']:
+            self.excel_backup.create_backup()
+            self.last_backup_time = current_time
         
         # 使用缓存数据
         if not force_check and self._data_cache is not None:
@@ -237,4 +282,36 @@ class ExcelMonitor:
 
     def get_valid_rows(self):
         """获取有效数据行（使用缓存）"""
-        return self.check_excel_data(force_check=False) 
+        return self.check_excel_data(force_check=False)
+
+    def add_resource_handler(self, handler):
+        """添加资源变化处理器"""
+        self.resource_handlers.append(handler)
+        
+    def handle_resource_change(self, file_path):
+        """处理资源文件变化"""
+        try:
+            # 从文件路径解析任务信息
+            task_info = self._parse_resource_path(file_path)
+            if task_info:
+                for handler in self.resource_handlers:
+                    handler(task_info)
+        except Exception as e:
+            logger.error(f"处理资源变化失败: {str(e)}")
+            
+    def _parse_resource_path(self, file_path):
+        """从文件路径解析任务信息"""
+        try:
+            # 路径格式: .../uploads/设备名/时间/img/文件名
+            parts = file_path.split(os.sep)
+            if 'uploads' in parts:
+                idx = parts.index('uploads')
+                if len(parts) > idx + 3:
+                    return {
+                        'post_name': parts[idx + 1],
+                        'time_str': parts[idx + 2],
+                        'file_name': parts[-1]
+                    }
+            return None
+        except Exception:
+            return None 

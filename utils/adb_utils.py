@@ -20,6 +20,7 @@ from utils.logger import get_logger
 from config.settings import ADB_COMMAND, DEVICE_PATHS
 import re
 import os
+import time
 
 logger = get_logger(__name__)
 
@@ -59,24 +60,13 @@ class ADBHelper:
         return device_id in self.connected_devices
     
     def push_file(self, device_id, source_path, target_path):
-        """
-        使用ADB推送文件到设备
-        """
+        """使用ADB推送文件到设备"""
         try:
             if not self.is_device_connected(device_id):
-                logger.error(f"设备未连接: {device_id}")
                 return False, "DEVICE_NOT_FOUND"
             
-            # 检查源文件是否存在
-            if not os.path.exists(source_path):
-                logger.error(f"源文件不存在: {source_path}")
-                return False, "SOURCE_NOT_FOUND"
-            
-            # 获取目标目录
+            # 创建目标目录
             target_dir = os.path.dirname(target_path)
-            print(target_dir)
-            
-            # 先尝试创建目录
             mkdir_command = [
                 ADB_COMMAND,
                 '-s', device_id,
@@ -87,10 +77,9 @@ class ADBHelper:
             ]
             
             try:
-                # 创建目录（忽略错误）
-                subprocess.run(mkdir_command, capture_output=True, text=True)
+                subprocess.run(mkdir_command, capture_output=True, encoding='utf-8')
             except:
-                pass  # 忽略目录创建错误，因为目录可能已存在
+                pass
             
             # 执行文件传输
             command = [
@@ -101,20 +90,21 @@ class ADBHelper:
                 target_path
             ]
             
-            logger.info(f"执行传输命令: {' '.join(command)}")
-            result = subprocess.run(command, capture_output=True, text=True)
+            # 使用subprocess.Popen直接处理二进制输出
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
             
-            if result.stdout:
-                logger.info(f"命令输出: {result.stdout}")
-            if result.stderr:
-                logger.warning(f"错误输出: {result.stderr}")
+            # 等待进程完成
+            stdout, stderr = process.communicate()
             
-            # 验证传输是否成功
-            if result.returncode == 0:
-                logger.info(f"文件传输成功: {target_path}")
+            if process.returncode == 0:
+                logger.debug(f"文件传输成功: {target_path}")
                 return True, "SUCCESS"
             else:
-                logger.error(f"传输失败: {result.stderr}")
+                logger.debug(f"传输失败: {stderr.decode('utf-8', errors='ignore')}")
                 return False, "TRANSFER_FAILED"
             
         except Exception as e:
@@ -142,3 +132,20 @@ class ADBHelper:
         except Exception as e:
             logger.error(f"权限检查失败: {str(e)}")
             return False
+
+    def ensure_device_connected(self, device_id, max_retries=3, retry_interval=5):
+        """确保设备连接可用"""
+        for attempt in range(max_retries):
+            if self.is_device_connected(device_id):
+                return True
+                
+            logger.warning(f"设备未连接，尝试重新连接 ({attempt + 1}/{max_retries}): {device_id}")
+            try:
+                # 尝试重新连接设备
+                subprocess.run([ADB_COMMAND, 'connect', device_id], 
+                             capture_output=True, text=True)
+                time.sleep(retry_interval)
+            except Exception as e:
+                logger.error(f"连接设备失败: {str(e)}")
+                
+        return False

@@ -11,7 +11,9 @@ dependencies = [
     "pandas (>=2.2.3,<3.0.0)",
     "openpyxl (>=3.1.5,<4.0.0)",
     "watchdog (>=6.0.0,<7.0.0)",
-    "python-dateutil (>=2.9.0.post0,<3.0.0)"
+    "python-dateutil (>=2.9.0.post0,<3.0.0)",
+    "uiautomator2 (>=3.2.9,<4.0.0)",
+    "pywin32 (>=310,<311)"
 ]
 
 
