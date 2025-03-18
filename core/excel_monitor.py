@@ -154,15 +154,14 @@ class ExcelMonitor:
             
             # 基础数据清理
             required_fields = ['time', 'postName']
-            valid_rows = df.dropna(subset=required_fields)
+            valid_rows = df.copy()  # 创建副本，不直接修改原数据
             
-            # 状态字段标准化
+            # 添加状态列（如果不存在）
             if 'status' not in valid_rows.columns:
                 valid_rows['status'] = ''
-            valid_rows['status'] = valid_rows['status'].astype(str).str.strip()
             
-            # 只保留未来任务
-            valid_rows = valid_rows[valid_rows['time'].apply(validator.is_task_valid)]
+            # 标记无效行而不是删除它们
+            valid_rows['is_valid'] = valid_rows['time'].apply(validator.is_task_valid)
             
             # 创建任务目录
             for _, row in valid_rows.iterrows():
@@ -222,7 +221,16 @@ class ExcelMonitor:
         try:
             with self._lock:
                 df = self.read_excel_safe()
+                logger.debug(f"读取到的原始数据行数: {len(df)}")
+                
                 valid_rows = self.filter_valid_rows(df)
+                logger.debug(f"过滤后的有效数据行数: {len(valid_rows)}")
+                
+                # 如果行数减少，输出详细信息
+                if len(valid_rows) < len(df):
+                    logger.warning(f"被过滤掉的行数: {len(df) - len(valid_rows)}")
+                    logger.debug("被过滤的原因可能是：必填字段为空或时间格式不正确")
+                
                 current_hash = self.calculate_data_hash(valid_rows)
                 
                 # 只在数据变化时更新缓存和输出日志
