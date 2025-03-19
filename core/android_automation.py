@@ -28,11 +28,12 @@ class AndroidAutomation:
             # 启动小红书
             self._start_app()
             
-            # 选择并上传图片
+            # 选择并上传图片（必需）
             self._upload_images(image_paths)
             
-            # 填写标题和内容
-            self._input_content(title, content)
+            # 填写标题和内容（可选）
+            if title or content:  # 只有在有标题或正文时才调用
+                self._input_content(title, content)
             
             # 发布
             self._publish()

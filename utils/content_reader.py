@@ -11,11 +11,14 @@ class ContentReader:
     def read_content_file(content_path):
         """
         读取内容文件，返回标题和正文
-        格式：
-        标题：xxx
-        正文：xxx
+        如果文件不存在，返回空字符串
         """
         try:
+            # 如果文件不存在，直接返回空字符串
+            if not os.path.exists(content_path):
+                logger.debug(f"内容文件不存在，使用空内容: {content_path}")
+                return "", ""
+                
             with open(content_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
@@ -41,4 +44,4 @@ class ContentReader:
             
         except Exception as e:
             logger.error(f"读取内容文件失败: {str(e)}")
-            return None, None 
+            return "", "" 

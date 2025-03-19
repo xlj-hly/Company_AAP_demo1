@@ -18,21 +18,23 @@
 5. 调度未来时间的任务执行
    """
 
-project_root/
-├── config/ # 配置文件
-│ ├── settings.py # 主配置文件
-│ └── ignore_config.py # 日志过滤配置
-├── core/ # 核心模块
-│ ├── excel_monitor.py # Excel监控
-│ ├── file_handler.py # 文件处理
-│ └── task_scheduler.py # 任务调度
-├── utils/ # 工具模块
-│ ├── adb_utils.py # ADB工具
-│ ├── excel_utils.py # Excel工具
-│ └── logger.py # 日志工具
-├── uploads/ # 上传文件目录
-├── logs/ # 日志目录
-├── temp/ # 临时文件目录
-├── content/ # 内容文件目录
-├── media/ # 媒体文件目录
-└── main.py # 程序入口
+```bash
+   project_root/
+   ├── config/ # 配置文件
+   │ ├── settings.py # 主配置文件
+   │ └── ignore_config.py # 日志过滤配置
+   ├── core/ # 核心模块
+   │ ├── excel_monitor.py # Excel监控
+   │ ├── file_handler.py # 文件处理
+   │ └── task_scheduler.py # 任务调度
+   ├── utils/ # 工具模块
+   │ ├── adb_utils.py # ADB工具
+   │ ├── excel_utils.py # Excel工具
+   │ └── logger.py # 日志工具
+   ├── uploads/ # 上传文件目录
+   ├── logs/ # 日志目录
+   ├── temp/ # 临时文件目录
+   ├── content/ # 内容文件目录
+   ├── media/ # 媒体文件目录
+   └── main.py # 程序入口
+```

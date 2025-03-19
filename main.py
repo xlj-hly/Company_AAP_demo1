@@ -47,6 +47,8 @@ class Application:
         self.task_scheduler = TaskScheduler()
         self.file_handler = FileHandler(RESOURCE_DIRS['UPLOADS'])
         self.running = True  # 运行状态标志
+        self.task_check_interval = 60  # 每60秒检查一次任务
+        self.last_task_check = 0
         
         # 注册资源变化处理器
         self.excel_monitor.add_resource_handler(self.handle_resource_change)
@@ -175,6 +177,14 @@ class Application:
         
         try:
             while self.running:
+                current_time = time.time()
+                
+                # 检查是否需要执行任务检查
+                if current_time - self.last_task_check >= self.task_check_interval:
+                    logger.debug("执行定时任务检查...")
+                    self.task_scheduler.check_pending_tasks()
+                    self.last_task_check = current_time
+                
                 valid_rows = self.excel_monitor.get_valid_rows()
                 
                 if valid_rows.empty:
