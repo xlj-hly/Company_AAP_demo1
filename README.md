@@ -123,9 +123,9 @@ project_root/
 
    - 解压 adb 压缩包
    - 参考以下步骤配置 adb 环境变量：
-     ![配置adb环境变量说明](adb\adb.png)
+     ![配置adb环境变量说明](adb/adb.png)
    - 测试连接
-     ![adb测试连接](adb\adb2.png)
+     ![adb测试连接](adb/adb2.png)
 
 4. **配置说明**
 
