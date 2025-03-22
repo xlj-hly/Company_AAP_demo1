@@ -60,7 +60,7 @@ class ADBHelper:
         return device_id in self.connected_devices
     
     def push_file(self, device_id, source_path, target_path):
-        """使用ADB推送文件到设备"""
+        """使用ADB推送文件并触发媒体扫描"""
         try:
             if not self.is_device_connected(device_id):
                 return False, "DEVICE_NOT_FOUND"
@@ -90,17 +90,16 @@ class ADBHelper:
                 target_path
             ]
             
-            # 使用subprocess.Popen直接处理二进制输出
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
             
-            # 等待进程完成
             stdout, stderr = process.communicate()
             
             if process.returncode == 0:
+                self.trigger_media_scan(device_id, target_path)
                 logger.debug(f"文件传输成功: {target_path}")
                 return True, "SUCCESS"
             else:
@@ -149,3 +148,35 @@ class ADBHelper:
                 logger.error(f"连接设备失败: {str(e)}")
                 
         return False
+
+    def trigger_media_scan(self, device_id, target_path):
+        """触发媒体扫描的备用方法"""
+        try:
+            # 方法1：使用广播
+            scan_command1 = [
+                ADB_COMMAND,
+                '-s', device_id,
+                'shell',
+                'am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://' + target_path
+            ]
+            
+            # 方法2：使用媒体存储命令
+            scan_command2 = [
+                ADB_COMMAND,
+                '-s', device_id,
+                'shell',
+                'content call --uri content://media/none/all --method SCAN_FILE --arg file://' + target_path
+            ]
+            
+            # 尝试第一种方法
+            result = subprocess.run(scan_command1, capture_output=True, encoding='utf-8')
+            if result.returncode != 0:
+                # 如果失败，尝试第二种方法
+                subprocess.run(scan_command2, capture_output=True, encoding='utf-8')
+            
+            logger.debug(f"媒体扫描请求已发送: {target_path}")
+            return True
+        
+        except Exception as e:
+            logger.warning(f"媒体扫描触发失败: {str(e)}")
+            return False

@@ -11,7 +11,7 @@
 
 ## 🛠️ 技术栈
 
-- **🐍 Python 3.x**: 核心开发语言
+- **🐍 Python 3.9**: 核心开发语言
 - **📊 pandas**: 数据处理和 Excel 文件操作
 - **📱 uiautomator2**: Android 设备自动化控制
 - **🔍 watchdog**: 文件系统监控

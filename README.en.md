@@ -11,7 +11,7 @@ A Python-based automated content publishing system that configures tasks via Exc
 
 ## 🛠️ Technology Stack
 
-- **🐍 Python 3.x**: Core language
+- **🐍 Python 3.9**: Core language
 - **📊 pandas**: Data processing & Excel operations
 - **📱 uiautomator2**: Android device automation
 - **🔍 watchdog**: File system monitoring

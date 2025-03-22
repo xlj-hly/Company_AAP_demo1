@@ -7,11 +7,11 @@
 ![依賴管理](https://img.shields.io/badge/dependencies-poetry-blueviolet)
 ![中文版](https://img.shields.io/badge/語言-繁體中文-brightgreen)
 
-🌐 多語言支援：简体中文 | [English](README.en.md) | [繁體中文](README.zh-TW.md)
+🌐 多語言支援：[简体中文](README.md) | [English](README.en.md) | 繁體中文
 
 ## 🛠️ 技術棧
 
-- **🐍 Python 3.x**: 核心開發語言
+- **🐍 Python 3.9**: 核心開發語言
 - **📊 pandas**: 資料處理和 Excel 檔案操作
 - **📱 uiautomator2**: Android 裝置自動化控制
 - **🔍 watchdog**: 檔案系統監控

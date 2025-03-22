@@ -42,17 +42,24 @@ class TaskScheduler:
             time_diff = task_time - now
             logger.debug(f"任务时间检查 - 当前时间: {now}, 任务时间: {task_time}, 相差: {time_diff}")
             
-            if task_time > now:
+            # 检查是否已存在相同的任务
+            task_id = f"{row['postName']}_{time_str}"
+            existing_tasks = [f"{t['data']['postName']}_{t['time'].strftime('%Y-%m-%d %H:%M:%S')}" 
+                             for t in self.tasks]
+            
+            if task_id not in existing_tasks and task_time > now:
                 self.tasks.append({
                     'time': task_time,
                     'data': row
                 })
                 logger.info(f"成功添加新任务: {row['postName']} - {time_str}")
-                # 添加调试信息：显示当前队列状态
                 logger.debug(f"当前任务队列长度: {len(self.tasks)}")
                 logger.debug(f"任务队列内容: {[{t['data']['postName']: t['time']} for t in self.tasks]}")
             else:
-                logger.warning(f"跳过过期任务: {row['postName']} - {time_str}")
+                if task_id in existing_tasks:
+                    logger.warning(f"跳过重复任务: {row['postName']} - {time_str}")
+                else:
+                    logger.warning(f"跳过过期任务: {row['postName']} - {time_str}")
         except Exception as e:
             logger.error(f"添加任务失败: {str(e)}")
     
@@ -67,12 +74,20 @@ class TaskScheduler:
             tasks_to_execute = []
             remaining_tasks = []
             
+            # 使用集合来跟踪已处理的任务
+            processed_tasks = set()
+            
             for task in self.tasks:
                 time_diff = task['time'] - current_time
+                task_id = f"{task['data']['postName']}_{task['time']}"
+                
                 logger.debug(f"任务 {task['data']['postName']} 距离执行还有: {time_diff}")
                 
                 if task['time'] <= current_time:
-                    tasks_to_execute.append(task)
+                    # 检查任务是否已经处理过
+                    if task_id not in processed_tasks:
+                        tasks_to_execute.append(task)
+                        processed_tasks.add(task_id)
                 else:
                     remaining_tasks.append(task)
             
